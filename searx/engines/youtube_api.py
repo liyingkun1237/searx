@@ -16,7 +16,7 @@ from searx.url_utils import urlencode
 categories = ['videos', 'music']
 paging = False
 language_support = True
-api_key = None
+api_key = 'AIzaSyBc3xAnnqvIEh3pbdBQTm97Lpm7Ae29EEk'
 
 # search-url
 base_url = 'https://www.googleapis.com/youtube/v3/search'

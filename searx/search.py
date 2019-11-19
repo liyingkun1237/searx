@@ -268,6 +268,7 @@ def get_search_query_from_webapp(preferences, form):
 
     # set blocked engines
     disabled_engines = preferences.engines.get_disabled()
+    enabled_engines = preferences.engines.get_enabled()
 
     # parse query, if tags are set, which change
     # the serch engine or search-language

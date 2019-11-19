@@ -16,10 +16,15 @@ along with searx. If not, see < http://www.gnu.org/licenses/ >.
 
 (C) 2013- by Adam Tauber, <asciimoo@gmail.com>
 '''
+from flask_cors import CORS
+
+from logdemo.logfile import get_logger
+from searx.Cache.keyCache import keyRedis
 
 if __name__ == '__main__':
     from sys import path
     from os.path import realpath, dirname
+
     path.append(realpath(dirname(realpath(__file__)) + '/../'))
 
 import hashlib
@@ -31,6 +36,7 @@ import sys
 import requests
 
 from searx import logger
+
 logger = logger.getChild('webapp')
 
 try:
@@ -40,11 +46,13 @@ try:
 except:
     logger.critical("cannot import dependency: pygments")
     from sys import exit
+
     exit(1)
 from cgi import escape
 from datetime import datetime, timedelta
 from time import time
-from werkzeug.contrib.fixers import ProxyFix
+# from werkzeug.contrib.fixers import ProxyFix
+from werkzeug.middleware.proxy_fix import ProxyFix
 from flask import (
     Flask, request, render_template, url_for, Response, make_response,
     redirect, send_from_directory
@@ -81,11 +89,7 @@ except ImportError:
     logger.critical("The pyopenssl package has to be installed.\n"
                     "Some HTTPS connections will fail")
 
-try:
-    from cStringIO import StringIO
-except:
-    from io import StringIO
-
+from io import StringIO
 
 if sys.version_info[0] == 3:
     unicode = str
@@ -95,6 +99,7 @@ else:
 
 # serve pages with HTTP/1.1
 from werkzeug.serving import WSGIRequestHandler
+
 WSGIRequestHandler.protocol_version = "HTTP/{}".format(settings['server'].get('http_protocol_version', '1.0'))
 
 # about static
@@ -128,8 +133,8 @@ app.jinja_env.add_extension('jinja2.ext.loopcontrols')
 app.secret_key = settings['server']['secret_key']
 
 if not searx_debug \
-   or os.environ.get("WERKZEUG_RUN_MAIN") == "true" \
-   or os.environ.get('UWSGI_ORIGINAL_PROC_NAME') is not None:
+        or os.environ.get("WERKZEUG_RUN_MAIN") == "true" \
+        or os.environ.get('UWSGI_ORIGINAL_PROC_NAME') is not None:
     initialize_engines(settings['engines'])
 
 babel = Babel(app)
@@ -159,12 +164,12 @@ def get_locale():
     if request.preferences.get_value('locale') != '':
         locale = request.preferences.get_value('locale')
 
-    if 'locale' in request.args\
-       and request.args['locale'] in settings['locales']:
+    if 'locale' in request.args \
+            and request.args['locale'] in settings['locales']:
         locale = request.args['locale']
 
-    if 'locale' in request.form\
-       and request.form['locale'] in settings['locales']:
+    if 'locale' in request.form \
+            and request.form['locale'] in settings['locales']:
         locale = request.form['locale']
 
     return locale
@@ -194,9 +199,8 @@ def code_highlighter(codelines, language=None):
             line_code_start = line
 
         # new codeblock is detected
-        if last_line is not None and\
-           last_line + 1 != line:
-
+        if last_line is not None and \
+                last_line + 1 != line:
             # highlight last codepart
             formatter = HtmlFormatter(linenos='inline',
                                       linenostart=line_code_start)
@@ -287,7 +291,6 @@ def proxify(url):
 
 
 def image_proxify(url):
-
     if url.startswith('//'):
         url = 'https:' + url
 
@@ -419,6 +422,13 @@ def pre_request():
         if k not in request.form:
             request.form[k] = v
 
+    # todo 缓存机制
+    # 关键词累积加一
+    kr.keyNum(request.form['q'])
+    # 查询form是否存在，存在将结果直接返回
+    if request.form.get('research') == '0' and kr.existsForm(json.dumps(request.form)):
+        request.form['Result'] = kr.getResult(json.dumps(request.form))
+
     if request.form.get('preferences'):
         preferences.parse_encoded_data(request.form['preferences'])
     else:
@@ -481,6 +491,10 @@ def index_error(output_format, error_message):
         )
 
 
+logger_ = get_logger()
+
+
+@logger_.catch
 @app.route('/search', methods=['GET', 'POST'])
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -502,6 +516,10 @@ def index():
             )
         else:
             return index_error(output_format, 'No query'), 400
+
+    # 判断是否搜索过 ，搜索过则直接返回
+    if request.form.get('Result') is not None:
+        return Response(request.form.get('Result'), mimetype='application/json')
 
     # search
     search_query = None
@@ -564,21 +582,24 @@ def index():
                     if hours == 0:
                         result['publishedDate'] = gettext(u'{minutes} minute(s) ago').format(minutes=minutes)
                     else:
-                        result['publishedDate'] = gettext(u'{hours} hour(s), {minutes} minute(s) ago').format(hours=hours, minutes=minutes)  # noqa
+                        result['publishedDate'] = gettext(u'{hours} hour(s), {minutes} minute(s) ago').format(
+                            hours=hours, minutes=minutes)  # noqa
                 else:
                     result['publishedDate'] = format_date(result['publishedDate'])
 
     if output_format == 'json':
-        return Response(json.dumps({'query': search_query.query.decode('utf-8'),
-                                    'number_of_results': number_of_results,
-                                    'results': results,
-                                    'answers': list(result_container.answers),
-                                    'corrections': list(result_container.corrections),
-                                    'infoboxes': result_container.infoboxes,
-                                    'suggestions': list(result_container.suggestions),
-                                    'unresponsive_engines': list(result_container.unresponsive_engines)},
-                                   default=lambda item: list(item) if isinstance(item, set) else item),
-                        mimetype='application/json')
+        res = json.dumps({'query': search_query.query.decode('utf-8'),
+                          'number_of_results': number_of_results,
+                          'results': results,
+                          'answers': list(result_container.answers),
+                          'corrections': list(result_container.corrections),
+                          'infoboxes': result_container.infoboxes,
+                          'suggestions': list(result_container.suggestions),
+                          'unresponsive_engines': list(result_container.unresponsive_engines)},
+                         default=lambda item: list(item) if isinstance(item, set) else item)
+        # 保存下来搜索结果
+        kr.saveResult(json.dumps(request.form), res)
+        return Response(res, mimetype='application/json')
     elif output_format == 'csv':
         csv = UnicodeWriter(StringIO())
         keys = ('title', 'url', 'content', 'host', 'engine', 'score')
@@ -606,15 +627,15 @@ def index():
 
     # suggestions: use RawTextQuery to get the suggestion URLs with the same bang
     suggestion_urls = map(lambda suggestion: {
-                          'url': raw_text_query.changeSearchQuery(suggestion).getFullQuery(),
-                          'title': suggestion
-                          },
+        'url': raw_text_query.changeSearchQuery(suggestion).getFullQuery(),
+        'title': suggestion
+    },
                           result_container.suggestions)
 
     correction_urls = list(map(lambda correction: {
-                               'url': raw_text_query.changeSearchQuery(correction).getFullQuery(),
-                               'title': correction
-                               },
+        'url': raw_text_query.changeSearchQuery(correction).getFullQuery(),
+        'title': correction
+    },
                                result_container.corrections))
     #
     return render(
@@ -895,9 +916,9 @@ def config():
                                  'paging': engine.paging,
                                  'language_support': engine.language_support,
                                  'supported_languages':
-                                 list(engine.supported_languages.keys())
-                                 if isinstance(engine.supported_languages, dict)
-                                 else engine.supported_languages,
+                                     list(engine.supported_languages.keys())
+                                     if isinstance(engine.supported_languages, dict)
+                                     else engine.supported_languages,
                                  'safesearch': engine.safesearch,
                                  'time_range_support': engine.time_range_support,
                                  'timeout': engine.timeout}
@@ -973,6 +994,8 @@ class ReverseProxyPathFix(object):
 application = app
 # patch app to handle non root url-s behind proxy & wsgi
 app.wsgi_app = ReverseProxyPathFix(ProxyFix(application.wsgi_app))
+CORS(app, resources=r'/*')
 
 if __name__ == "__main__":
+    kr = keyRedis()
     run()

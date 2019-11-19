@@ -18,7 +18,7 @@ ACTION="$1"
 update_packages() {
     pip install --upgrade pip
     pip install --upgrade setuptools
-    pip install -r "$BASE_DIR/requirements.txt"
+    pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r "$BASE_DIR/requirements.txt"
 }
 
 update_dev_packages() {
